@@ -1,0 +1,565 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>HELMIO en 3D</title>
+<style>
+  :root{ --ivory:#F8F6F0; --navy:#142238; --pale:#DDF0EE; --yellow:#F6C343; --yellow-l:#FDEEC2; --muted:#455266; --line:#C9D1DA; }
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%;background:var(--ivory);color:var(--navy);
+    font-family:"Times New Roman",Times,"Liberation Serif",serif;-webkit-text-size-adjust:100%}
+  body{display:flex;flex-direction:column;min-height:100dvh}
+  header{padding:14px 18px 10px;display:flex;align-items:flex-end;justify-content:space-between;gap:12px;flex-wrap:wrap}
+  .brand h1{margin:0;font-size:34px;letter-spacing:.5px;line-height:1}
+  .brand h1 span{display:inline-block;border-bottom:4px solid var(--yellow);padding-bottom:2px}
+  .brand p{margin:6px 0 0;font-style:italic;font-size:17px}
+  .badge{font-style:italic;font-size:14px;border:1.5px solid var(--navy);border-radius:999px;padding:4px 12px;white-space:nowrap}
+  main{flex:1;display:flex;min-height:0}
+  #stage{position:relative;flex:1;min-height:52vh}
+  #stage canvas{display:block;width:100%;height:100%;outline:none;touch-action:none}
+  .hint{position:absolute;left:50%;top:10px;transform:translateX(-50%);background:rgba(255,255,255,.92);
+    border:1px solid var(--line);border-radius:999px;padding:6px 14px;font-size:15px;font-style:italic;
+    transition:opacity .6s;pointer-events:none;white-space:nowrap}
+  .tools{position:absolute;left:10px;right:10px;bottom:10px;display:flex;gap:8px;flex-wrap:wrap;justify-content:center}
+  .tools button{font:inherit;font-size:16px;border-radius:999px;padding:9px 15px;min-height:44px;cursor:pointer;
+    border:1.5px solid var(--navy);background:#fff;color:var(--navy)}
+  .tools button[aria-pressed="true"]{background:var(--navy);color:#fff}
+  .tools button:focus-visible,.chip:focus-visible{outline:3px solid var(--yellow);outline-offset:2px}
+  aside{background:#fff;border-top:1px solid var(--line);display:flex;flex-direction:column;min-height:0}
+  .layers{display:flex;gap:8px;padding:12px 14px 0;font-size:14px;color:var(--muted);font-style:italic;flex-wrap:wrap}
+  .chips{display:flex;gap:8px;overflow-x:auto;padding:10px 14px 8px;scrollbar-width:thin}
+  .chip{flex:0 0 auto;font:inherit;font-size:15px;border:1px solid var(--line);background:var(--ivory);color:var(--navy);
+    border-radius:999px;padding:8px 13px;min-height:40px;cursor:pointer;display:flex;align-items:center;gap:7px}
+  .chip i{width:11px;height:11px;border-radius:50%;display:inline-block;border:1px solid rgba(20,34,56,.35)}
+  .chip[aria-pressed="true"]{background:var(--yellow-l);border-color:var(--navy);font-weight:bold}
+  .card{padding:6px 18px 16px}
+  .card h2{margin:4px 0 6px;font-size:22px}
+  .card .tag{display:inline-block;font-size:13px;font-style:italic;background:var(--pale);border-radius:6px;padding:2px 8px;margin-bottom:6px}
+  .card p{margin:0 0 8px;font-size:17px;line-height:1.38}
+  .note{margin:0;padding:10px 18px 14px;font-size:14px;color:var(--muted);font-style:italic;border-top:1px solid #EEF0F2}
+  @media (min-width:900px){
+    main{flex-direction:row}
+    aside{width:390px;border-top:none;border-left:1px solid var(--line)}
+    .chips{flex-wrap:wrap;overflow:visible}
+    .card h2{font-size:24px}
+  }
+  @media (max-width:899px){ main{flex-direction:column} #stage{min-height:58vh} }
+</style>
+</head>
+<body>
+<header>
+  <div class="brand">
+    <h1><span>HELMIO</span></h1>
+    <p>Le casque connecté au service du vélo partagé, en 3D</p>
+  </div>
+  <div class="badge">Architecture proposée, non validée</div>
+</header>
+<main>
+  <div id="stage">
+    <div class="hint" id="hint">Faites tourner le casque, touchez un composant</div>
+    <div class="tools">
+      <button type="button" id="btnExplode" aria-pressed="false">Vue éclatée</button>
+      <button type="button" id="btnXray" aria-pressed="false">Voir l'intérieur</button>
+      <button type="button" id="btnBelow">Vue de dessous</button>
+      <button type="button" id="btnReset">Recentrer</button>
+    </div>
+  </div>
+  <aside>
+    <div class="chips" id="chips" role="toolbar" aria-label="Composants du casque"></div>
+    <div class="card" id="card" aria-live="polite"></div>
+    <p class="note">Projet universitaire HELMIO. Modèle illustratif : formes, proportions et positions des composants sont indicatives.</p>
+  </aside>
+</main>
+
+<script type="importmap">
+{ "imports": {
+  "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+  "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+}}
+</script>
+<script type="module">
+import * as THREE from "three";
+import { OrbitControls } from "three/addons/controls/OrbitControls.js";
+
+/* ================================================================== fiches */
+const COMPONENTS = [
+  { id:"overview", name:"Vue d'ensemble", color:"#F8F6F0", tag:"Le principe",
+    text:["Un casque disponible avec le vélo partagé, porté le temps du trajet puis restitué. L'électronique est intégrée à l'intérieur : de l'extérieur, c'est un casque comme les autres.",
+          "Deux couches fines : la calotte accueille l'électronique dans sa face interne, la doublure de confort la recouvre.",
+          "Après un impact probable, et un délai qui permet d'annuler, l'application peut prévenir les contacts d'urgence avec la localisation. Aucun diagnostic médical."] },
+  { id:"shell", name:"Couche 1 : calotte", color:"#FFFFFF", tag:"Protéger et accueillir",
+    text:["Coque extérieure et mousse de protection d'un casque standard, fourni par une PME de référence envisagée (Overade, aucun partenariat confirmé).",
+          "Sa face interne accueille chaque composant dans un logement peu profond, sur les nervures, loin des aérations.",
+          "Ces logements ne doivent pas affaiblir la protection : point à valider par des essais selon la norme des casques de vélo (EN 1078)."] },
+  { id:"liner", name:"Couche 2 : doublure de confort", color:"#1E2127", tag:"Couvrir et porter",
+    text:["Couche textile fine qui recouvre l'électronique et assure le confort, avec le système de réglage arrière et les sangles.",
+          "Elle se retire pour accéder aux composants lors du diagnostic à l'atelier."] },
+  { id:"sensors", name:"5 capteurs piézoélectriques", color:"#F6C343", tag:"Détecter",
+    text:["À l'avant, au sommet, à l'arrière et sur les deux côtés, ils mesurent des signaux liés aux impacts.",
+          "Leurs positions exactes restent à valider par des essais."] },
+  { id:"iface", name:"Interface des capteurs", color:"#3FA7A1", tag:"Mettre en forme",
+    text:["Petit circuit qui adapte les signaux des cinq capteurs avant leur lecture par le module ESP32."] },
+  { id:"esp32", name:"Module ESP32", color:"#142238", tag:"Traiter et communiquer",
+    text:["Analyse les signaux et communique avec le smartphone de l'utilisateur, qui déclenche l'alerte potentielle."] },
+  { id:"pcb", name:"Circuit imprimé", color:"#0B7A75", tag:"Relier",
+    text:["Carte fine, logée sur la nervure centrale arrière, qui porte l'ESP32 et relie l'interface, l'alimentation et la batterie."] },
+  { id:"power", name:"Batterie et alimentation", color:"#C81E6E", tag:"Alimenter",
+    text:["Batterie plate et circuit d'alimentation, de part et d'autre de la nervure arrière pour équilibrer le poids.",
+          "Autonomie et mode de recharge restent à dimensionner."] },
+  { id:"nfc", name:"Puce NFC", color:"#E2A80F", tag:"Informer",
+    text:["Logée sur le côté gauche, à l'écart des capteurs, et signalée à l'extérieur par un pictogramme : un smartphone approché donne accès à une fiche d'urgence.",
+          "Contenu de la fiche, association avec l'utilisateur d'un casque partagé et protection des données : à définir."] },
+  { id:"wires", name:"Câblage", color:"#6B7A90", tag:"Relier",
+    text:["Câbles plats et fins qui suivent les nervures de la calotte jusqu'au circuit imprimé, sans traverser les aérations."] },
+  { id:"fix", name:"Protection et fixations", color:"#9FB4CA", tag:"Maintenir",
+    text:["Chaque élément est encapsulé dans un film ou une coque souple et maintenu dans son logement. Matériau et mode de fixation restent à définir."] },
+  { id:"ident", name:"Identification", color:"#FDEEC2", tag:"Suivre",
+    text:["Marquage qui identifie chaque casque et son opérateur, utile pour les commandes, la collecte et le diagnostic."] },
+];
+const byId = Object.fromEntries(COMPONENTS.map(c => [c.id, c]));
+
+/* ================================================================== scène */
+const stage = document.getElementById("stage");
+const renderer = new THREE.WebGLRenderer({ antialias:true });
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+renderer.outputColorSpace = THREE.SRGBColorSpace;
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.0;
+stage.prepend(renderer.domElement);
+renderer.domElement.setAttribute("aria-label", "Modèle 3D du casque HELMIO");
+renderer.domElement.setAttribute("role", "img");
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color("#F8F6F0");
+const camera = new THREE.PerspectiveCamera(34, 1, 0.1, 400);
+const HOME_POS = new THREE.Vector3(48, 18, 54);
+const HOME_TGT = new THREE.Vector3(0, -3, 0);
+camera.position.copy(HOME_POS);
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.enableDamping = true; controls.enablePan = false;
+controls.minDistance = 24; controls.maxDistance = 100;
+controls.target.copy(HOME_TGT);
+controls.autoRotate = true; controls.autoRotateSpeed = 1.0;
+
+scene.add(new THREE.HemisphereLight("#ffffff", "#bdb6a8", 1.3));
+const key = new THREE.DirectionalLight("#ffffff", 2.2); key.position.set(25, 45, 30); scene.add(key);
+const rim = new THREE.DirectionalLight("#dbe8ff", 1.0); rim.position.set(-30, 10, -35); scene.add(rim);
+const under = new THREE.DirectionalLight("#ffffff", 0.6); under.position.set(0, -40, 10); scene.add(under);
+{
+  const c = document.createElement("canvas"); c.width = c.height = 256;
+  const g = c.getContext("2d"); const gr = g.createRadialGradient(128,128,10,128,128,128);
+  gr.addColorStop(0,"rgba(20,34,56,0.26)"); gr.addColorStop(1,"rgba(20,34,56,0)");
+  g.fillStyle = gr; g.fillRect(0,0,256,256);
+  const m = new THREE.Mesh(new THREE.PlaneGeometry(48,48),
+    new THREE.MeshBasicMaterial({ map:new THREE.CanvasTexture(c), transparent:true, depthWrite:false }));
+  m.rotation.x = -Math.PI/2; m.position.y = -21; scene.add(m);
+}
+
+/* ================================================================== géométrie paramétrique
+   lon : inclinaison latérale (0 = sommet, +pi/2 = côté droit), lat : avant (+) / arrière (-) */
+const SX = 10.2, SY = 11.0, SZ = 13.6;
+const K_OUT = 1.0, K_IN = 0.86, K_L1 = 0.845, K_L2 = 0.815;   // calotte (coque + mousse), doublure
+function unit(lon, lat){ return new THREE.Vector3(Math.cos(lat)*Math.sin(lon), Math.cos(lat)*Math.cos(lon), Math.sin(lat)); }
+function deform(v, k){
+  let { x, y, z } = v;
+  if (z < 0){ z *= 1.18; y -= (-z) * 0.10; }          // arrière allongé et plongeant
+  if (z > 0){ y -= z * z * 0.05; }                     // front légèrement abaissé
+  return new THREE.Vector3(x*SX*k, y*SY*k, z*SZ*k);
+}
+const P = (lon, lat, k) => deform(unit(lon, lat), k);
+function normalAt(lon, lat){                          // normale extérieure
+  const a = P(lon, lat, 1), b = P(lon + 0.01, lat, 1), c = P(lon, lat + 0.01, 1);
+  return new THREE.Vector3().subVectors(c, a).cross(new THREE.Vector3().subVectors(b, a)).normalize();
+}
+const rimY = lat => -0.17 + 0.12 * Math.sin(lat);
+// aérations : rectangles arrondis dans l'espace (|lon|, lat), avec inclinaison
+const VENTS = [
+  { c:0.29, w:0.115, l:0.12, h:0.42, s:0.00 },   // longues aérations supérieures
+  { c:0.26, w:0.11,  l:0.82, h:0.09, s:0.00 },   // aérations frontales
+  { c:0.62, w:0.08,  l:0.62, h:0.09, s:0.00 },   // frontales latérales
+  { c:0.68, w:0.085, l:0.00, h:0.36, s:-0.45 },  // latérales inclinées
+  { c:1.06, w:0.075, l:-0.15,h:0.28, s:-0.35 },  // latérales basses
+  { c:0.00, w:0.14,  l:-0.86,h:0.085,s:0.00 },   // aération arrière
+];
+function ventF(lon, lat, grow = 0){                    // > 0 hors aération (distance approx. en radians)
+  const L = Math.abs(lon); let f = 9;
+  for (const v of VENTS){
+    const cl = v.c + v.s * (lat - v.l);
+    const a = Math.abs(L - cl) / (v.w + grow), b = Math.abs(lat - v.l) / (v.h + grow);
+    f = Math.min(f, (Math.pow(a*a*a*a + b*b*b*b, 0.25) - 1) * Math.min(v.w, v.h));
+  }
+  return f;
+}
+const rimF = (lon, lat, off = 0) => unit(lon, lat).y - (rimY(lat) + off);
+const shellF = (lon, lat) => Math.min(rimF(lon, lat), ventF(lon, lat));
+const linerF = (lon, lat) => Math.min(rimF(lon, lat, 0.07), ventF(lon, lat, 0.02));
+const inVent = (lon, lat) => ventF(lon, lat) < 0;
+
+function layerGeos(kOut, kIn, F){
+  const NL = 280, NT = 240, L0 = -2.05, L1 = 2.05, T0 = -1.56, T1 = 1.56;
+  const dL = (L1 - L0) / NL, dT = (T1 - T0) / NT;
+  const idx = (i, j) => j * (NL + 1) + i;
+  const kept = new Uint8Array(NL * NT);
+  for (let j = 0; j < NT; j++) for (let i = 0; i < NL; i++)
+    kept[j*NL + i] = F(L0 + dL * (i + .5), T0 + dT * (j + .5)) > 0 ? 1 : 0;
+  const K = (i, j) => (i >= 0 && j >= 0 && i < NL && j < NT) ? kept[j*NL + i] : 0;
+  // sommets : ceux du bord (entre cellule gardée et retirée) sont projetés sur le contour F = 0
+  const posO = new Float32Array((NL + 1) * (NT + 1) * 3), posI = new Float32Array((NL + 1) * (NT + 1) * 3);
+  for (let j = 0; j <= NT; j++) for (let i = 0; i <= NL; i++){
+    let lo = L0 + dL * i, la = T0 + dT * j;
+    const ks = [K(i-1, j-1), K(i, j-1), K(i-1, j), K(i, j)];
+    const any = ks.some(Boolean), all = ks.every(Boolean);
+    if (any && !all){
+      for (let it = 0; it < 4; it++){
+        const f = F(lo, la), e = 1e-4;
+        const gx = (F(lo + e, la) - f) / e, gy = (F(lo, la + e) - f) / e, g2 = gx*gx + gy*gy;
+        if (g2 < 1e-12) break;
+        let sx = -f * gx / g2, sy = -f * gy / g2;
+        const m = Math.hypot(sx / dL, sy / dT); if (m > 1.2){ sx *= 1.2 / m; sy *= 1.2 / m; }
+        lo += sx; la += sy;
+      }
+    }
+    const o = P(lo, la, kOut), n = P(lo, la, kIn), q = idx(i, j) * 3;
+    posO[q] = o.x; posO[q+1] = o.y; posO[q+2] = o.z; posI[q] = n.x; posI[q+1] = n.y; posI[q+2] = n.z;
+  }
+  const triO = [], triI = [], wall = [];
+  const v = (arr, k) => [arr[k*3], arr[k*3+1], arr[k*3+2]];
+  for (let j = 0; j < NT; j++) for (let i = 0; i < NL; i++){
+    if (!K(i, j)) continue;
+    const a = idx(i, j), b = idx(i+1, j), c = idx(i+1, j+1), d = idx(i, j+1);
+    triO.push(a, c, b, a, d, c); triI.push(a, b, c, a, c, d);
+    for (const [ni, nj, p, q] of [[i, j-1, a, b], [i+1, j, b, c], [i, j+1, c, d], [i-1, j, d, a]]){
+      if (K(ni, nj)) continue;
+      const po = v(posO, p), qo = v(posO, q), pi = v(posI, p), qi = v(posI, q);
+      wall.push(...po, ...qo, ...qi, ...po, ...qi, ...pi);
+    }
+  }
+  const mk = (pos, tri) => { const g = new THREE.BufferGeometry();
+    g.setAttribute("position", new THREE.BufferAttribute(pos, 3)); g.setIndex(tri); g.computeVertexNormals(); return g; };
+  const gw = new THREE.BufferGeometry(); gw.setAttribute("position", new THREE.Float32BufferAttribute(wall, 3)); gw.computeVertexNormals();
+  return { outer: mk(posO, triO), inner: mk(posI.slice(), triI), wall: gw };
+}
+
+/* ================================================================== registre des composants */
+const pickables = [];
+const groups = {};
+function group(id, parent = scene){ const g = new THREE.Group(); g.name = id; parent.add(g);
+  groups[id] = groups[id] || { mats:[], nodes:[] }; groups[id].nodes.push(g); return g; }
+function mat(id, color, o = {}){
+  const m = new THREE.MeshStandardMaterial({ color, roughness:0.5, metalness:0.05, transparent:true, ...o });
+  m.userData.baseEmissive = m.emissive.clone(); m.userData.baseOpacity = m.opacity;
+  (groups[id] = groups[id] || { mats:[], nodes:[] }).mats.push(m); return m;
+}
+function add(id, geo, material, parent){
+  const mesh = new THREE.Mesh(geo, material); mesh.userData.comp = id; parent.add(mesh); pickables.push(mesh); return mesh;
+}
+
+/* ---------------------------------------------------- couche 1 : calotte (coque blanche mate + mousse grise) */
+const shellG = group("shell");
+const S1 = layerGeos(K_OUT, K_IN, shellF);
+const shellWhite = mat("shell", "#F4F4F1", { roughness:0.72, side:THREE.FrontSide });
+const epsMat = mat("shell", "#4A4D52", { roughness:0.95, side:THREE.DoubleSide });
+add("shell", S1.outer, shellWhite, shellG);
+add("shell", S1.inner, epsMat, shellG);
+add("shell", S1.wall, epsMat, shellG);
+// marquages extérieurs : nom HELMIO sur les côtés, pictogramme NFC, étiquette d'identification
+function decal(id, lon, lat, w, h, draw, parent, k = 1.008){
+  const c = document.createElement("canvas"); c.width = 1024; c.height = Math.round(1024 * h / w);
+  draw(c.getContext("2d"), c.width, c.height);
+  const tex = new THREE.CanvasTexture(c); tex.colorSpace = THREE.SRGBColorSpace; tex.anisotropy = renderer.capabilities.getMaxAnisotropy();
+  const m = mat(id, "#ffffff", { map:tex, roughness:0.7, depthWrite:false, side:THREE.DoubleSide, polygonOffset:true, polygonOffsetFactor:-8, polygonOffsetUnits:-8 });
+  // petite surface courbe qui épouse la coque
+  const seg = 12, pos = [], uv = [], ind = [];
+  const n = normalAt(lon, lat), center = P(lon, lat, k);
+  // repère lisible depuis l'extérieur : « haut » vers le ciel, « droite » = haut x normale
+  let up = new THREE.Vector3(0, 1, 0).addScaledVector(n, -n.y).normalize();
+  if (up.lengthSq() < 0.01) up = new THREE.Vector3(0, 0, 1);
+  const right = new THREE.Vector3().crossVectors(up, n).normalize();
+  for (let r = 0; r <= seg; r++) for (let q = 0; q <= seg; q++){
+    const u = q / seg - .5, vv = r / seg - .5;
+    const flat = center.clone().addScaledVector(right, u * w).addScaledVector(up, vv * h);
+    const p = projectToShell(flat, k);
+    pos.push(p.x, p.y, p.z); uv.push(q / seg, r / seg);
+  }
+  for (let r = 0; r < seg; r++) for (let q = 0; q < seg; q++){
+    const a = r*(seg+1)+q, b = a+1, c2 = a+seg+1, d = c2+1; ind.push(a, c2, b, b, c2, d);
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute("position", new THREE.Float32BufferAttribute(pos, 3)); g.setAttribute("uv", new THREE.Float32BufferAttribute(uv, 2));
+  g.setIndex(ind); g.computeVertexNormals();
+  return add(id, g, m, parent);
+}
+function projectToShell(p, k){
+  // inverse numérique : (lon, lat) dont le point a la même direction que p (recherche grossière puis fine)
+  const d0 = p.clone().normalize();
+  let L = Math.atan2(p.x, p.y), T = Math.asin(Math.max(-1, Math.min(1, d0.z)));
+  const err = (l, t) => P(l, t, k).normalize().distanceToSquared(d0);
+  for (const [range, step] of [[0.35, 0.025], [0.03, 0.002], [0.002, 0.0002]]){
+    let bl = L, bt = T, be = err(L, T);
+    for (let dl = -range; dl <= range; dl += step) for (let dt = -range; dt <= range; dt += step){
+      const e = err(L + dl, T + dt); if (e < be){ be = e; bl = L + dl; bt = T + dt; }
+    }
+    L = bl; T = bt;
+  }
+  return P(L, T, k);
+}
+const SANS = "'Helvetica Neue', Helvetica, Arial, 'Liberation Sans', sans-serif";
+function spaced(g, text, cx, cy, size, weight, spacing, color, maxW = g.canvas.width * 0.9){
+  g.font = `${weight} ${size}px ${SANS}`;
+  let ws = [...text].map(ch => g.measureText(ch).width);
+  let total = ws.reduce((x, y) => x + y, 0) + spacing * (text.length - 1);
+  if (total > maxW){ const f = maxW / total; size *= f; spacing *= f; g.font = `${weight} ${size}px ${SANS}`;
+    ws = [...text].map(ch => g.measureText(ch).width); total = ws.reduce((x, y) => x + y, 0) + spacing * (text.length - 1); }
+  g.fillStyle = color; g.textBaseline = "middle"; g.textAlign = "left";
+  let x = cx - total / 2;
+  [...text].forEach((ch, i) => { g.fillText(ch, x, cy); x += ws[i] + spacing; });
+  return total;
+}
+const wordmark = (g, w, h) => {
+  g.clearRect(0, 0, w, h);
+  const tw = spaced(g, "HELMIO", w / 2, h * 0.47, h * 0.62, 600, h * 0.30, "#142238");
+  g.fillStyle = "#F6C343"; g.fillRect(w / 2 - tw / 2, h * 0.86, tw * 0.22, h * 0.07);
+};
+decal("shell",  1.28, -0.02, 6.0, 1.4, wordmark, shellG);
+decal("shell", -1.28, -0.02, 6.0, 1.4, wordmark, shellG);
+// pictogramme NFC, côté gauche, au-dessus de la puce
+decal("nfc", -1.25, 0.66, 2.6, 2.6, (g, w, h) => {
+  const r = w * 0.16;
+  g.fillStyle = "#142238"; g.beginPath(); g.roundRect(w*0.03, h*0.03, w*0.94, h*0.94, r); g.fill();
+  g.strokeStyle = "#F6C343"; g.lineCap = "round"; g.lineWidth = w * 0.045;
+  const cx = w * 0.5, cy = h * 0.40;
+  [0.10, 0.18, 0.26].forEach(k => { g.beginPath(); g.arc(cx - w*0.12, cy, w*k, -0.62, 0.62); g.stroke(); });
+  g.fillStyle = "#F6C343"; g.beginPath(); g.arc(cx - w*0.12, cy, w*0.035, 0, Math.PI*2); g.fill();
+  spaced(g, "NFC", w / 2, h * 0.76, h * 0.24, 700, h * 0.03, "#FFFFFF");
+}, shellG);
+// étiquette d'identification, à l'arrière
+decal("ident", 0.0, -1.10, 3.4, 1.2, (g, w, h) => {
+  g.fillStyle = "#FFFFFF"; g.beginPath(); g.roundRect(4, 4, w - 8, h - 8, h * 0.12); g.fill();
+  g.strokeStyle = "#142238"; g.lineWidth = 8; g.stroke();
+  g.fillStyle = "#142238";
+  let x = w * 0.08; const pattern = [3,1,2,1,1,3,1,2,2,1,3,1,1,2,1,3,2,1,1,2,3,1];
+  pattern.forEach((bw, i) => { if (i % 2 === 0) g.fillRect(x, h * 0.2, bw * 7, h * 0.6); x += bw * 7; });
+  spaced(g, "ID", w * 0.80, h * 0.5, h * 0.42, 700, h * 0.04, "#142238");
+}, shellG);
+
+/* ---------------------------------------------------- couche 2 : doublure de confort, réglage, sangles */
+const linerG = group("liner");
+const S2 = layerGeos(K_L1, K_L2, linerF);
+const fabric = mat("liner", "#1E2127", { roughness:1.0, side:THREE.DoubleSide });
+add("liner", S2.outer, fabric, linerG); add("liner", S2.inner, fabric, linerG); add("liner", S2.wall, fabric, linerG);
+const strapMat = mat("liner", "#15171B", { roughness:0.9 });
+// berceau de réglage arrière et molette
+{
+  const pts = []; for (let t = -1.75; t <= 1.75; t += 0.05){
+    const lon = Math.sign(t) * Math.min(Math.abs(t), 1.45), lat = -Math.abs(t) * 0.0 - (1.15 - Math.abs(t) * 0.55);
+    pts.push(P(Math.abs(t) > 1.45 ? Math.sign(t)*1.45 : t, Math.max(-1.2, -1.2 + Math.abs(t) * 0.75), 0.80).add(new THREE.Vector3(0, -1.2, 0)));
+  }
+  add("liner", new THREE.TubeGeometry(new THREE.CatmullRomCurve3(pts), 80, 0.32, 8), strapMat, linerG);
+  const back = P(0, -1.2, 0.80).add(new THREE.Vector3(0, -1.4, -0.6));
+  const dial = add("liner", new THREE.CylinderGeometry(1.5, 1.5, 0.9, 32), strapMat, linerG);
+  dial.position.copy(back); dial.rotation.x = Math.PI / 2 - 0.4;
+  const knurl = add("liner", new THREE.TorusGeometry(1.5, 0.12, 6, 40), mat("liner", "#3A3E45"), linerG);
+  knurl.position.copy(dial.position); knurl.rotation.copy(dial.rotation); knurl.rotateX(Math.PI/2);
+}
+// sangles : rubans textiles souples (sangle tissée), qui pendent sous le casque
+const webTex = (() => {
+  const c = document.createElement("canvas"); c.width = 64; c.height = 64; const g = c.getContext("2d");
+  g.fillStyle = "#17191D"; g.fillRect(0, 0, 64, 64);
+  g.strokeStyle = "rgba(255,255,255,0.07)"; g.lineWidth = 2;
+  for (let y = 0; y < 64; y += 6){ g.beginPath(); g.moveTo(0, y); g.lineTo(64, y + 3); g.stroke(); }
+  g.strokeStyle = "rgba(0,0,0,0.35)"; g.lineWidth = 3; [2, 62].forEach(x => { g.beginPath(); g.moveTo(x, 0); g.lineTo(x, 64); g.stroke(); });
+  const t = new THREE.CanvasTexture(c); t.wrapS = t.wrapT = THREE.RepeatWrapping; t.colorSpace = THREE.SRGBColorSpace; return t;
+})();
+const webMat = mat("liner", "#ffffff", { map:webTex, roughness:1.0, side:THREE.DoubleSide });
+function ribbon(points, width, material, parent){
+  const curve = new THREE.CatmullRomCurve3(points, false, "centripetal");
+  const n = 80, pos = [], uv = [], ind = []; let prevW = null, len = 0, prevP = null;
+  for (let i = 0; i <= n; i++){
+    const t = i / n, p = curve.getPointAt(t), T = curve.getTangentAt(t);
+    let R = new THREE.Vector3(p.x, 0, p.z * 0.8); if (R.lengthSq() < 0.01) R.set(0, 0, 1); R.normalize();
+    let W = new THREE.Vector3().crossVectors(T, R).normalize();
+    if (prevW && W.dot(prevW) < 0) W.negate(); prevW = W;
+    if (prevP) len += p.distanceTo(prevP); prevP = p;
+    const a = p.clone().addScaledVector(W, width / 2), b = p.clone().addScaledVector(W, -width / 2);
+    pos.push(a.x, a.y, a.z, b.x, b.y, b.z); uv.push(0, len / 2, 1, len / 2);
+    if (i < n){ const k = i * 2; ind.push(k, k + 1, k + 2, k + 1, k + 3, k + 2); }
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute("position", new THREE.Float32BufferAttribute(pos, 3)); g.setAttribute("uv", new THREE.Float32BufferAttribute(uv, 2));
+  g.setIndex(ind); g.computeVertexNormals();
+  return add("liner", g, material, parent);
+}
+const plastic = mat("liner", "#202329", { roughness:0.55 });
+const BUCKLE = new THREE.Vector3(0.6, -19.0, 5.2);
+[-1, 1].forEach(s => {
+  const front = P(s*1.33, 0.52, 0.835), backp = P(s*1.31, -0.72, 0.835);
+  const div = new THREE.Vector3(s*8.3, -9.2, 0.9);                   // séparateur sous l'oreille
+  ribbon([front, new THREE.Vector3(s*9.0, -3.4, 3.6), new THREE.Vector3(s*8.8, -6.6, 2.0), div], 1.5, webMat, linerG);
+  ribbon([backp, new THREE.Vector3(s*9.2, -4.0, -5.0), new THREE.Vector3(s*8.9, -7.2, -1.6), div], 1.5, webMat, linerG);
+  // sangle jugulaire : descend et se courbe vers la boucle, avec un léger affaissement
+  ribbon([div, new THREE.Vector3(s*7.9, -12.4, 1.6), new THREE.Vector3(s*5.6, -16.2, 3.4),
+          new THREE.Vector3(s*2.6, -18.6, 4.8), BUCKLE.clone().add(new THREE.Vector3(s*1.9, 0, 0))], 1.5, webMat, linerG);
+  // séparateur en Y (pièce plastique)
+  const shape = new THREE.Shape();
+  shape.moveTo(-1.1, 1.3); shape.lineTo(1.1, 1.3); shape.quadraticCurveTo(1.3, 1.3, 1.1, 0.9);
+  shape.lineTo(0.45, -1.2); shape.quadraticCurveTo(0, -1.6, -0.45, -1.2); shape.lineTo(-1.1, 0.9); shape.quadraticCurveTo(-1.3, 1.3, -1.1, 1.3);
+  const yg = new THREE.ExtrudeGeometry(shape, { depth:0.35, bevelEnabled:true, bevelThickness:0.08, bevelSize:0.08, bevelSegments:2 });
+  const ym = add("liner", yg, plastic, linerG);
+  ym.position.copy(div).add(new THREE.Vector3(s*0.25, 0, 0));
+  ym.rotation.y = s * Math.PI / 2;
+});
+// boucle à déclipsage latéral : partie femelle, partie mâle, passant de réglage et bout de sangle libre
+{
+  const fem = add("liner", new THREE.BoxGeometry(2.4, 1.7, 0.75), plastic, linerG);
+  fem.position.copy(BUCKLE).add(new THREE.Vector3(0.9, 0, 0)); fem.rotation.z = 0.06;
+  const male = add("liner", new THREE.BoxGeometry(2.0, 1.3, 0.55), mat("liner", "#2C3038", { roughness:0.5 }), linerG);
+  male.position.copy(BUCKLE).add(new THREE.Vector3(-1.1, 0.02, 0)); male.rotation.z = 0.06;
+  [-0.45, 0.45].forEach(dy => {
+    const prong = add("liner", new THREE.BoxGeometry(0.9, 0.18, 0.5), plastic, linerG);
+    prong.position.copy(BUCKLE).add(new THREE.Vector3(-0.1, dy, 0));
+  });
+  const slider = add("liner", new THREE.BoxGeometry(0.5, 1.9, 0.5), plastic, linerG);
+  slider.position.copy(BUCKLE).add(new THREE.Vector3(-4.2, 0.9, -0.5)); slider.rotation.z = 0.5;
+  ribbon([BUCKLE.clone().add(new THREE.Vector3(-1.9, -0.1, 0.1)), BUCKLE.clone().add(new THREE.Vector3(-3.0, -1.4, 0.4)),
+          BUCKLE.clone().add(new THREE.Vector3(-3.4, -3.4, 0.2))], 1.5, webMat, linerG);   // bout libre
+}
+
+/* ---------------------------------------------------- électronique, logée dans la face interne de la calotte */
+const elecG = group("electronics");
+function onInner(id, lon, lat, w, h, t, color, o = {}, k = K_IN + 0.004){
+  const n = normalAt(lon, lat), center = P(lon, lat, k);
+  const t1 = new THREE.Vector3().subVectors(P(lon, lat + 0.01, k), center).normalize();
+  const m = add(id, new THREE.BoxGeometry(w, h, t), mat(id, color, o), elecG);
+  const basis = new THREE.Matrix4().makeBasis(new THREE.Vector3().crossVectors(t1, n).normalize(), t1, n);
+  m.quaternion.setFromRotationMatrix(basis);
+  m.position.copy(center).addScaledVector(n, -t / 2 + 0.05);   // affleure la face interne
+  m.userData.normal = n; m.userData.home = m.position.clone(); m.userData.lonlat = [lon, lat];
+  return m;
+}
+// capteurs : disques
+const SENSORS = [[0, 0.98], [0, 0.12], [0, -1.12], [-1.36, 0.22], [1.36, 0.22]];
+SENSORS.forEach(([lon, lat]) => {
+  const n = normalAt(lon, lat), c = P(lon, lat, K_IN + 0.004);
+  const d = add("sensors", new THREE.CylinderGeometry(1.15, 1.15, 0.22, 36), mat("sensors", "#F6C343", { metalness:0.4, roughness:0.35 }), elecG);
+  d.quaternion.setFromUnitVectors(new THREE.Vector3(0,1,0), n); d.position.copy(c).addScaledVector(n, -0.06);
+  d.userData.normal = n; d.userData.home = d.position.clone();
+  const r = add("sensors", new THREE.CylinderGeometry(0.62, 0.62, 0.3, 32), mat("sensors", "#A87C0E", { metalness:0.6, roughness:0.3 }), elecG);
+  r.quaternion.copy(d.quaternion); r.position.copy(d.position).addScaledVector(n, -0.04);
+  r.userData.normal = n; r.userData.home = r.position.clone();
+});
+onInner("pcb",   0.00, -0.44, 3.4, 4.6, 0.12, "#0B7A75", { roughness:0.6 });
+onInner("esp32", 0.00, -0.40, 1.8, 2.5, 0.32, "#142238", { roughness:0.45 }, K_IN - 0.006);
+onInner("esp32", 0.00, -0.38, 1.3, 1.6, 0.18, "#C7CDD4", { metalness:0.9, roughness:0.25 }, K_IN - 0.022);
+onInner("iface", 0.00, -0.14, 1.5, 1.4, 0.26, "#3FA7A1", { roughness:0.5 });
+onInner("power", -0.40, -0.66, 3.0, 4.0, 0.40, "#C81E6E", { roughness:0.4, metalness:0.15 });   // batterie plate
+onInner("power",  0.40, -0.66, 1.6, 1.8, 0.25, "#8E1550", { roughness:0.5 });                    // circuit d'alimentation
+onInner("nfc",   -1.25, 0.66, 2.2, 2.2, 0.06, "#E2A80F", { roughness:0.5 });
+// protection et fixations : films translucides sur l'électronique centrale et la batterie
+onInner("fix", 0.00, -0.42, 3.9, 5.2, 0.05, "#9FB4CA", { opacity:0.3, roughness:0.2 }, K_IN - 0.03);
+onInner("fix", -0.40, -0.66, 3.5, 4.5, 0.05, "#9FB4CA", { opacity:0.3, roughness:0.2 }, K_IN - 0.03);
+
+// câblage : câbles plats le long des nervures
+const ROUTES = [
+  [[0, 0.98], [0, 0.55], [0, 0.05], [0, -0.22]],
+  [[0, 0.12], [0, -0.22]],
+  [[0, -1.12], [0.2, -0.98], [0.21, -0.62], [0.06, -0.5]],
+  [[1.36, 0.22], [1.36, -0.45], [1.0, -0.78], [0.55, -0.85], [0.12, -0.55]],
+  [[-1.36, 0.22], [-1.36, -0.45], [-1.0, -0.78], [-0.55, -0.85], [-0.12, -0.55]],
+  [[-0.40, -0.66], [-0.12, -0.5]],
+  [[0.40, -0.66], [0.12, -0.5]],
+];
+const wireMat = mat("wires", "#6B7A90", { roughness:0.6 });
+ROUTES.forEach(r => {
+  const pts = [];
+  for (let s = 0; s < r.length - 1; s++) for (let t = 0; t < 1; t += 0.1){
+    const lon = r[s][0] + (r[s+1][0] - r[s][0]) * t, lat = r[s][1] + (r[s+1][1] - r[s][1]) * t;
+    pts.push(P(lon, lat, K_IN - 0.004));
+  }
+  const last = r[r.length - 1]; pts.push(P(last[0], last[1], K_IN - 0.004));
+  const m = add("wires", new THREE.TubeGeometry(new THREE.CatmullRomCurve3(pts), pts.length * 4, 0.11, 6), wireMat, elecG);
+  m.userData.home = m.position.clone(); m.userData.normal = new THREE.Vector3();
+});
+
+/* ================================================================== interface */
+const chipsEl = document.getElementById("chips"), cardEl = document.getElementById("card");
+let selected = "overview";
+COMPONENTS.forEach(c => {
+  const b = document.createElement("button"); b.type = "button"; b.className = "chip"; b.dataset.id = c.id;
+  b.innerHTML = `<i style="background:${c.color}"></i>${c.name}`;
+  b.addEventListener("click", () => select(c.id, true)); chipsEl.appendChild(b);
+});
+function renderCard(){
+  const c = byId[selected];
+  cardEl.innerHTML = `<h2>${c.name}</h2><span class="tag">${c.tag}</span>` + c.text.map(t => `<p>${t}</p>`).join("");
+  chipsEl.querySelectorAll(".chip").forEach(b => b.setAttribute("aria-pressed", b.dataset.id === selected ? "true" : "false"));
+}
+const HL = new THREE.Color("#F6C343");
+const INNER_IDS = ["sensors","iface","esp32","pcb","power","wires","fix"];
+let xray = false, exploded = false, explodeT = 0, camGoal = null, focusing = false;
+const tgtGoal = HOME_TGT.clone();
+function select(id, fromChip){
+  selected = id; renderCard();
+  Object.entries(groups).forEach(([gid, g]) => g.mats.forEach(m => {
+    m.emissive.copy(gid === id ? HL : m.userData.baseEmissive); m.emissiveIntensity = gid === id ? 0.45 : 1;
+  }));
+  controls.autoRotate = false; hideHint();
+  if (INNER_IDS.includes(id) && !xray && !exploded) setXray(true);   // un composant interne : on montre l'intérieur
+  if (fromChip){ const ch = chipsEl.querySelector(`[data-id="${id}"]`); ch && ch.scrollIntoView({ block:"nearest", inline:"center", behavior:"smooth" }); }
+  const meshes = pickables.filter(m => m.userData.comp === id);
+  if (["overview","shell","liner"].includes(id) || !meshes.length){ tgtGoal.copy(HOME_TGT); }
+  else { const box = new THREE.Box3(); meshes.forEach(m => box.expandByObject(m)); box.getCenter(tgtGoal); tgtGoal.lerp(HOME_TGT, 0.55); }
+  focusing = true;
+}
+const btnExplode = document.getElementById("btnExplode"), btnXray = document.getElementById("btnXray");
+function setXray(v){ xray = v; btnXray.setAttribute("aria-pressed", v); }
+btnExplode.addEventListener("click", () => { exploded = !exploded; btnExplode.setAttribute("aria-pressed", exploded); controls.autoRotate = false; hideHint(); });
+btnXray.addEventListener("click", () => { setXray(!xray); controls.autoRotate = false; hideHint(); });
+document.getElementById("btnBelow").addEventListener("click", () => {
+  camGoal = new THREE.Vector3(18, -52, 22); tgtGoal.copy(HOME_TGT); focusing = true; controls.autoRotate = false; hideHint();
+});
+document.getElementById("btnReset").addEventListener("click", () => {
+  camGoal = HOME_POS.clone(); setXray(false); exploded = false; btnExplode.setAttribute("aria-pressed", false); select("overview");
+});
+const hint = document.getElementById("hint"); let hintHidden = false;
+function hideHint(){ if (!hintHidden){ hintHidden = true; hint.style.opacity = 0; } }
+const ray = new THREE.Raycaster(), ptr = new THREE.Vector2(); let down = null;
+renderer.domElement.addEventListener("pointerdown", e => { down = [e.clientX, e.clientY]; controls.autoRotate = false; camGoal = null; hideHint(); });
+renderer.domElement.addEventListener("pointerup", e => {
+  if (!down || Math.hypot(e.clientX - down[0], e.clientY - down[1]) > 7) return;
+  const r = renderer.domElement.getBoundingClientRect();
+  ptr.set(((e.clientX - r.left) / r.width) * 2 - 1, -((e.clientY - r.top) / r.height) * 2 + 1);
+  ray.setFromCamera(ptr, camera);
+  const hits = ray.intersectObjects(pickables, false).filter(h => h.object.material.opacity > 0.3);
+  if (hits.length) select(hits[0].object.userData.comp);
+});
+
+/* ================================================================== animation */
+function resize(){
+  const w = stage.clientWidth, h = stage.clientHeight;
+  renderer.setSize(w, h, false); camera.aspect = w / h; camera.fov = w < 560 ? 44 : 34; camera.updateProjectionMatrix();
+}
+new ResizeObserver(resize).observe(stage); resize();
+const clock = new THREE.Clock();
+function setOpacity(id, o){ groups[id].mats.forEach(m => { m.opacity = Math.min(m.userData.baseOpacity, o); m.depthWrite = o > 0.9; }); }
+function tick(){
+  const dt = Math.min(clock.getDelta(), 0.05);
+  explodeT += ((exploded ? 1 : 0) - explodeT) * Math.min(1, dt * 5);
+  const e = explodeT;
+  shellG.position.y = 10 * e;
+  linerG.position.y = -9 * e;
+  elecG.children.forEach(m => { if (m.userData.home) m.position.copy(m.userData.home).addScaledVector(m.userData.normal, -1.2 * e); });
+  setOpacity("shell", xray ? 0.14 : 1);
+  setOpacity("liner", xray ? 0.12 : 1);
+  ["nfc","ident"].forEach(id => setOpacity(id, 1));
+  const pulse = 0.3 + 0.22 * Math.sin(clock.elapsedTime * 4);
+  if (groups[selected]) groups[selected].mats.forEach(m => m.emissiveIntensity = pulse);
+  if (focusing){ controls.target.lerp(tgtGoal, Math.min(1, dt * 4)); if (controls.target.distanceTo(tgtGoal) < 0.02) focusing = false; }
+  if (camGoal){ camera.position.lerp(camGoal, Math.min(1, dt * 3)); if (camera.position.distanceTo(camGoal) < 0.05) camGoal = null; }
+  controls.update(); renderer.render(scene, camera); requestAnimationFrame(tick);
+}
+select("overview"); controls.autoRotate = true; hintHidden = false; hint.style.opacity = 1;
+tick();
+</script>
+</body>
+</html>
